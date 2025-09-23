@@ -9,8 +9,8 @@ from datetime import datetime
 class NewsScoutAgent:
     """AI agent for scouting and analyzing news articles"""
     
-    def __init__(self, openai_api_key: str):
-        openai.api_key = openai_api_key
+    def __init__(self):
+        openai.api_key = os.getenv("OPENAI_API_KEY")
         openai.base_url = os.getenv("OPENAI_API_BASE_URL")
         self.news_fetcher = NewsFetcherTool()
         
@@ -20,7 +20,6 @@ class NewsScoutAgent:
         articles_data = []
         for i, article in enumerate(articles):
             articles_data.append({
-                "original_index": i,
                 "title": article.title,
                 "link": article.link,
                 "source": article.source,
@@ -41,7 +40,6 @@ class NewsScoutAgent:
         JSON FORMAT:
         [
           {
-            "original_index": 0,
             "importance_score": 8,
             "summary": "A concise sentence explaining the story's impact and why it matters.",
             "original_title": "The original headline here",
@@ -53,14 +51,13 @@ class NewsScoutAgent:
         
         user_prompt = f"Please analyze the following batch of articles:\n\n{json.dumps(articles_data, indent=2)}"
         
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gemini-2.0-flash",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.2,
-            max_tokens=4000
         )
         
         response_text = response.choices[0].message.content
@@ -71,14 +68,17 @@ class NewsScoutAgent:
             try:
                 start_idx = response_text.find('[')
                 end_idx = response_text.rfind(']') + 1
+
                 if start_idx >= 0 and end_idx > start_idx:
                     json_str = response_text[start_idx:end_idx]
                     analysis_data = json.loads(json_str)
                 else:
                     raise ValueError("Could not extract JSON from response")
+                    
             except (json.JSONDecodeError, ValueError) as e:
                 print(f"Error parsing AI response: {e}")
                 print(f"Raw response: {response_text}")
+
                 return []
         
         results = []
@@ -90,29 +90,38 @@ class NewsScoutAgent:
             
             if original_article:
                 result = AnalysisResult(
-                    original_index=item["original_index"],
                     importance_score=item["importance_score"],
                     summary=item["summary"],
                     original_title=item["original_title"],
                     original_link=item["original_link"],
-                    reasoning=item.get("reasoning")
+                    reasoning=item["reasoning"]
                 )
+
                 results.append(result)
         
         return results
     
     def generate_scout_report(self, rss_url: str) -> ScoutReport:
         """Generate a complete scout report from an RSS feed"""
-        articles = self.news_fetcher.fetch_news_from_rss(rss_url)
-        
-        analysis_results = self.analyze_articles(articles)
-        
-        important_findings = [r for r in analysis_results if r.importance_score >= 5]
-        
-        report = ScoutReport(
-            generated_at=datetime.now(),
-            analyzed_articles=len(articles),
-            important_findings=important_findings
-        )
-        
-        return report
+
+        try:
+            articles = self.news_fetcher.fetch_news_from_rss(rss_url)
+            
+            if not articles:
+                raise Exception("No news articles found in the feed.")
+
+            analysis_results = self.analyze_articles(articles)
+            
+            important_findings = [r for r in analysis_results if r.importance_score >= 5]
+            
+            report = ScoutReport(
+                generated_at=datetime.now(),
+                analyzed_articles=len(articles),
+                important_findings=important_findings
+            )
+            
+            return report
+
+        except Exception as e:
+            print(f"Error generating scout report: {e}")
+            return

@@ -1,4 +1,3 @@
-import os
 import schedule
 import time
 from datetime import datetime
@@ -11,16 +10,16 @@ def run_scouting_task():
     """Task to run the news scouting agent"""
     print(f"[{datetime.now().isoformat()}] Starting news scouting task...")
     
-    agent = NewsScoutAgent(openai_api_key=os.getenv("OPENAI_API_KEY"))
+    agent = NewsScoutAgent()
     
     # RSS feed URL (example: Google News search for "artificial intelligence")
     # rss_url = "https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en"
     
-    rss_url = "https://news.google.com/rss/hl=en-US&gl=US&ceid=US:en"
+    rss_url = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 
     try:
         report = agent.generate_scout_report(rss_url)
-        
+
         print(f"Analyzed {report.analyzed_articles} articles")
         print(f"Found {len(report.important_findings)} important stories:")
         
@@ -34,7 +33,7 @@ def run_scouting_task():
             print("-" * 80)
             
         with open(f"scout_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", "w") as f:
-            f.write(report.json(indent=2))
+            f.write(report.model_dump_json())
             
     except Exception as e:
         print(f"Error during scouting task: {e}")
