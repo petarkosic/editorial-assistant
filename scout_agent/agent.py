@@ -23,7 +23,8 @@ class NewsScoutAgent:
                 "title": article.title,
                 "link": article.link,
                 "source": article.source,
-                "pub_date": article.pub_date.isoformat() if article.pub_date else "Unknown"
+                "pub_date": article.pub_date.isoformat() if article.pub_date else "Unknown",
+                "description": article.description
             })
         
         system_prompt = """You are an assistant editor at a major news organization. Your sole task is to monitor incoming news feeds and identify the most important and breaking stories.
@@ -44,7 +45,8 @@ class NewsScoutAgent:
             "summary": "A concise sentence explaining the story's impact and why it matters.",
             "original_title": "The original headline here",
             "original_link": "The original link here",
-            "reasoning": "Brief explanation of why this score was assigned"
+            "reasoning": "Brief explanation of why this score was assigned",
+            "description": ["Link to related news articles"]
           }
         ]
         """
@@ -94,7 +96,8 @@ class NewsScoutAgent:
                     summary=item["summary"],
                     original_title=item["original_title"],
                     original_link=item["original_link"],
-                    reasoning=item["reasoning"]
+                    reasoning=item["reasoning"],
+                    description=item["description"]
                 )
 
                 results.append(result)
