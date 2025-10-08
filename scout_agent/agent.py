@@ -1,10 +1,11 @@
 import os
 import openai
 import json
-from typing import List, Callable
+from typing import List
 from models import NewsArticle, AnalysisResult, ScoutReport
 from tools import NewsFetcherTool
 from datetime import datetime
+from googlenewsdecoder import gnewsdecoder
 
 class NewsScoutAgent:
     """AI agent for scouting and analyzing news articles"""
@@ -91,13 +92,21 @@ class NewsScoutAgent:
             )
             
             if original_article:
+                original_link = self.decode_google_news_url(item["original_link"])
+
+                decoded_descriptions = []
+
+                for desc in item["description"]:
+                    decoded_desc = self.decode_google_news_url(desc)
+                    decoded_descriptions.append(decoded_desc)
+
                 result = AnalysisResult(
                     importance_score=item["importance_score"],
                     summary=item["summary"],
                     original_title=item["original_title"],
-                    original_link=item["original_link"],
+                    original_link=original_link,
                     reasoning=item["reasoning"],
-                    description=item["description"]
+                    description=decoded_descriptions,
                 )
 
                 results.append(result)
@@ -128,3 +137,21 @@ class NewsScoutAgent:
         except Exception as e:
             print(f"Error generating scout report: {e}")
             return
+
+    def decode_google_news_url(self, url: str) -> str:
+        """Decode a Google News URL to its original article URL."""
+
+        try:
+            decoded_result = gnewsdecoder(url, interval=1)
+            
+            if decoded_result.get("status"):
+                return decoded_result["decoded_url"]
+            else:
+                print(f"Error decoding URL {url}: {decoded_result.get('message')}")
+
+                return url 
+                
+        except Exception as e:
+            print(f"Exception decoding URL {url}: {e}")
+            
+            return url
