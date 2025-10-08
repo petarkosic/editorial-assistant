@@ -94,19 +94,13 @@ class NewsScoutAgent:
             if original_article:
                 original_link = self.decode_google_news_url(item["original_link"])
 
-                decoded_descriptions = []
-
-                for desc in item["description"]:
-                    decoded_desc = self.decode_google_news_url(desc)
-                    decoded_descriptions.append(decoded_desc)
-
                 result = AnalysisResult(
                     importance_score=item["importance_score"],
                     summary=item["summary"],
                     original_title=item["original_title"],
                     original_link=original_link,
                     reasoning=item["reasoning"],
-                    description=decoded_descriptions,
+                    description=item["description"],
                 )
 
                 results.append(result)
