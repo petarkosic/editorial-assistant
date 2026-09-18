@@ -2,7 +2,7 @@ import datetime
 import feedparser
 from bs4 import BeautifulSoup
 from typing import List
-from models import NewsArticle
+from common.models import NewsArticle
 
 def extract_hrefs_from_description(description: str) -> List[str]:
     if not description:

@@ -1,37 +1,57 @@
-# Editorial AI Agents
+# Editorial Assistant
 
-A multi-agent system for automating editorial workflows - from news scouting and research to content production and distribution.
+A multi-agent editorial pipeline with a human-in-the-loop web UI: scout breaking
+news, research it, and draft articles from it — approving or rejecting at each
+stage, with an LLM-as-judge quality score alongside every approval.
 
-## Overview
+## Status
 
-This project implements AI agents that work together to automate various stages of editorial workflows, inspired by modern newsroom automation needs. The system is designed to be modular, allowing different agents to handle specific tasks while working together seamlessly.
-
-## Project Vision
-
-This project aims to build smart tools and AI agents to enhance editorial operations, initially within editorial teams and eventually across other departments.
-
-## Available Agents
-
-### [News Scout Agent](/scout_agent/README.md)
-
-- **Purpose**: Monitors RSS feeds and identifies breaking news/important stories
-- **Status**: Done
-- **Features**: Real-time monitoring, AI-powered importance scoring, automated reporting
-
-### Research Agent (Planned)
-
-- **Purpose**: Research identified important stories
-- **Status**: Planned
-- **Features**: Multi-source analysis, fact-checking, background research
-
-### Content Synthesis Agent (Planned)
-
-- **Purpose**: Creates new articles based on researched content
-- **Status**: Planned
-- **Features**: Style-adaptive writing, multi-perspective synthesis
+| Stage                                                                | Status      |
+| -------------------------------------------------------------------- | ----------- |
+| Scout — monitor an RSS feed, score importance, judge quality         | **Working** |
+| Research — agentic tool-calling loop (search + fetch), judge quality | Not built   |
+| Synthesis — draft an article from a brief, judge quality             | Not built   |
+| Offline evaluation suite                                             | Not built   |
 
 ## Architecture
 
 ```text
-Input Sources → Scout Agent → Research Agent → Synthesis Agent → Output Channels
+scout_agent/  →  research_agent/  →  synthesis_agent/     (framework-free, one LLM call each)
+      \               |                    /
+       \              |                   /
+        \-------- evaluation/  ----------/                  (LLM-as-judge, per stage)
+                       |
+                  backend/ (FastAPI, Postgres via SQLAlchemy + Alembic)
+                       |
+                  frontend/ (React + Vite)
 ```
+
+## Running it locally
+
+```bash
+docker compose up -d db
+uv sync
+uv run alembic -c backend/alembic.ini upgrade head
+uv run uvicorn backend.main:app --port 8000
+```
+
+In a separate terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Copy `.env.example` to `.env` and set a real `OPENAI_API_KEY` (Gemini, via
+[AI Studio](https://aistudio.google.com/)) for the scout to actually run.
+
+## Project layout
+
+- `common/` — shared config, LLM client, pydantic domain models.
+- `scout_agent/`, `research_agent/`, `synthesis_agent/` — the three pipeline
+  agents, one LLM call each.
+- `evaluation/` — the LLM-as-judge (`Judge`), one rubric per stage.
+- `backend/` — FastAPI app, Postgres models, background task pipeline,
+  `/api/*` routes.
+- `frontend/` — React + Vite web UI.

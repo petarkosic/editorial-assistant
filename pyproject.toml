@@ -1,0 +1,38 @@
+[project]
+name = "editorial-assistant"
+version = "0.1.0"
+description = "Editorial multi-agent pipeline with a human-in-the-loop web UI"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.20.0",
+    "argon2-cffi>=25.1.0",
+    "asyncpg>=0.31.0",
+    "beautifulsoup4>=4.15.0",
+    "fastapi>=0.141.1",
+    "feedparser>=6.0.14",
+    "googlenewsdecoder>=0.1.7",
+    "openai>=3.14.1",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+    "pyjwt>=2.14.0",
+    "python-dotenv>=1.2.3",
+    "python-multipart>=0.0.32",
+    "requests>=2.34.2",
+    "sqlalchemy>=2.0.54",
+    "uvicorn[standard]>=0.53.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

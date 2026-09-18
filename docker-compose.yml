@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres
+    environment:
+      POSTGRES_USER: editorial
+      POSTGRES_PASSWORD: editorial
+      POSTGRES_DB: editorial
+    ports:
+      - '5432:5432'
+    volumes:
+      - editorial_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U editorial']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  editorial_pgdata:
