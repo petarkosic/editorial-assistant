@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 from common.config import MODEL_JUDGE
 from common.llm import get_client, parse_json_response
-from common.models import ScoutReport
+from common.models import AnalysisResult, ResearchBrief, ScoutReport
 from evaluation.evaluator import EvaluationScore
 
 
@@ -37,6 +37,38 @@ Return ONLY valid JSON of this exact shape:
     {"criterion": "Reasoning Clarity", "score": 4, "reasoning": "..."},
     {"criterion": "Consistency", "score": 4, "reasoning": "..."},
     {"criterion": "Relevance", "score": 4, "reasoning": "..."}
+  ],
+  "strengths": ["..."],
+  "weaknesses": ["..."],
+  "suggestions": "..."
+}
+"""
+
+
+_RESEARCH_SYSTEM_PROMPT = """You are an expert editor evaluating a research brief produced by an
+AI research agent that used web search and page-fetch tools to investigate a story.
+
+Evaluate the brief on these criteria, each scored 1-5 (5 = excellent):
+1. Grounding - are the key facts traceable to the fetched/searched sources provided?
+2. Coverage - does the brief cover the important angles of the story?
+3. Fact-Check Flag Quality - are the fact_check_flags sensible and appropriately cautious?
+4. Hallucination Check - are there claims that do NOT appear to come from any source?
+5. Source Usage - were the sources (URLs actually fetched) put to good use in the brief?
+6. Research Strategy Quality - given the tool-call trace (if provided), were the
+   search/fetch choices sensible, did the agent stop at a reasonable point, and
+   were there any wasted or redundant tool calls? If no trace was available, say
+   so explicitly in your reasoning for this criterion instead of guessing.
+
+Return ONLY valid JSON of this exact shape:
+{
+  "overall_score": 4.1,
+  "scores": [
+    {"criterion": "Grounding", "score": 4, "reasoning": "..."},
+    {"criterion": "Coverage", "score": 4, "reasoning": "..."},
+    {"criterion": "Fact-Check Flag Quality", "score": 4, "reasoning": "..."},
+    {"criterion": "Hallucination Check", "score": 4, "reasoning": "..."},
+    {"criterion": "Source Usage", "score": 4, "reasoning": "..."},
+    {"criterion": "Research Strategy Quality", "score": 4, "reasoning": "..."}
   ],
   "strengths": ["..."],
   "weaknesses": ["..."],
@@ -81,10 +113,39 @@ class Judge:
 
         return StageEvaluation(**data)
 
-    def evaluate_research(self, brief, finding, trace: list[dict] | None = None) -> StageEvaluation:
-        # Research rubric: grounding, coverage, fact-check-flag quality,
-        # hallucination check, source usage, research-strategy quality (from trace).
-        raise NotImplementedError("research rubric")
+    def evaluate_research(
+        self,
+        brief: ResearchBrief,
+        finding: AnalysisResult,
+        trace: list[dict] | None = None,
+    ) -> StageEvaluation:
+        if trace:
+            trace_block = "\n".join(
+                f"- {t['tool']}({t.get('args', {})}) -> {t.get('result_summary', '')}"
+                for t in trace
+            )
+        else:
+            trace_block = "(no tool-call trace was available for this evaluation)"
+
+        user_prompt = (
+            f"STORY: {finding.original_title}\n"
+            f"BRIEF BACKGROUND: {brief.background}\n"
+            f"KEY FACTS: {json.dumps(brief.key_facts)}\n"
+            f"OPEN QUESTIONS: {json.dumps(brief.open_questions)}\n"
+            f"FACT-CHECK FLAGS: {json.dumps(brief.fact_check_flags)}\n"
+            f"SOURCES: {json.dumps([s.model_dump() for s in brief.sources])}\n\n"
+            f"TOOL-CALL TRACE:\n{trace_block}"
+        )
+        response = self.client.chat.completions.create(
+            model=MODEL_JUDGE,
+            messages=[
+                {"role": "system", "content": _RESEARCH_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+        )
+        data = parse_json_response(response.choices[0].message.content)
+        return StageEvaluation(**data)
 
     def evaluate_draft(self, draft, brief) -> StageEvaluation:
         # Draft rubric: fidelity to brief, no fabricated facts/quotes,

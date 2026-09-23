@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CreateRunRequest(BaseModel):
@@ -10,7 +11,7 @@ class CreateRunRequest(BaseModel):
 
 
 class StoryOut(BaseModel):
-    id: str
+    id: uuid.UUID
     status: str
     selected: bool
     finding: dict
@@ -26,7 +27,7 @@ class EvaluationOut(BaseModel):
 
 
 class RunSummary(BaseModel):
-    id: str
+    id: uuid.UUID
     status: str
     source_kind: str
     source_query: str | None = None
@@ -36,7 +37,7 @@ class RunSummary(BaseModel):
 
 
 class RunDetail(BaseModel):
-    id: str
+    id: uuid.UUID
     status: str
     source_kind: str
     source_query: str | None = None
@@ -45,3 +46,21 @@ class RunDetail(BaseModel):
     stories: list[StoryOut]
     scout_report: dict | None = None
     scout_evaluation: EvaluationOut | None = None
+
+
+class SelectStoriesRequest(BaseModel):
+    story_ids: list[str] = Field(..., min_length=1)
+
+
+class StoryDetail(BaseModel):
+    id: uuid.UUID
+    run_id: uuid.UUID
+    status: str
+    finding: dict
+    selected: bool
+    error: str | None
+    research_brief: dict | None = None
+    research_trace: dict | None = None
+    research_evaluation: EvaluationOut | None = None
+    article_draft: dict | None = None
+    draft_evaluation: EvaluationOut | None = None

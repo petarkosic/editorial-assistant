@@ -82,3 +82,88 @@ async def get_scout_evaluation(session: AsyncSession, run_id) -> Evaluation | No
 
 async def delete_run(session: AsyncSession, run: Run) -> None:
     await session.delete(run)
+
+
+async def get_story(session: AsyncSession, run_id, story_id) -> Story | None:
+    return (
+        await session.execute(
+            select(Story).where(Story.id == story_id, Story.run_id == run_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def mark_stories_selected(session: AsyncSession, story_ids: list) -> None:
+    """Only affects stories still `pending` — a stale/late resend of an id for
+    an already-selected story is a no-op, never resets its progress."""
+    await session.execute(
+        Story.__table__.update()
+        .where(Story.id.in_(story_ids), Story.status == "pending")
+        .values(selected=True)
+    )
+
+
+async def get_research_artifact(session: AsyncSession, story_id) -> Artifact | None:
+    return (
+        (
+            await session.execute(
+                select(Artifact)
+                .where(Artifact.story_id == story_id, Artifact.kind == "research_brief")
+                .order_by(Artifact.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def get_research_trace_artifact(session: AsyncSession, story_id) -> Artifact | None:
+    return (
+        (
+            await session.execute(
+                select(Artifact)
+                .where(Artifact.story_id == story_id, Artifact.kind == "research_trace")
+                .order_by(Artifact.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def get_research_evaluation(session: AsyncSession, story_id) -> Evaluation | None:
+    return (
+        (
+            await session.execute(
+                select(Evaluation)
+                .where(Evaluation.story_id == story_id, Evaluation.stage == "research")
+                .order_by(Evaluation.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def upsert_artifact(
+    session: AsyncSession, run_id, story_id, kind: str, file_key: str, content: dict
+) -> Artifact:
+    existing = (
+        (
+            await session.execute(
+                select(Artifact).where(Artifact.story_id == story_id, Artifact.kind == kind)
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+    if existing is not None:
+        existing.content = content
+        existing.file_key = file_key
+
+        return existing
+
+    art = Artifact(run_id=run_id, story_id=story_id, kind=kind, file_key=file_key, content=content)
+    session.add(art)
+    
+    return art

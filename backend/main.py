@@ -1,12 +1,24 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.settings import settings
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from backend.pipeline import reconcile_orphans
+
+    await reconcile_orphans()
+    yield
+
+
 app = FastAPI(
     title="Editorial Assistant API",
     openapi_url="/api/openapi.json",
     docs_url="/api/docs",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
