@@ -17,7 +17,7 @@
 
 .trigger[data-state='active'] {
   color: var(--color-text);
-  border-bottom-color: var(--color-primary);
+  border-bottom-color: var(--color-ink);
 }
 
 .panel {

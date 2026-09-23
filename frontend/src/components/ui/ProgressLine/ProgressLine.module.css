@@ -1,0 +1,86 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 320px;
+}
+
+.bar {
+  position: relative;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.sweep {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 35%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, transparent, var(--color-primary), transparent);
+  animation: sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(385%);
+  }
+}
+
+.captions {
+  position: relative;
+  height: 17px;
+}
+
+.caption {
+  position: absolute;
+  inset: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  opacity: 0;
+  animation: cycleCaption 7.8s ease-in-out infinite;
+}
+
+@keyframes cycleCaption {
+  0% {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  6% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  28% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  34% {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep,
+  .caption {
+    animation: none;
+  }
+
+  .caption {
+    opacity: 1;
+    position: static;
+  }
+
+  .caption:not(:first-child) {
+    display: none;
+  }
+}

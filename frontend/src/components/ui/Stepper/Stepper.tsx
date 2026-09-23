@@ -24,7 +24,9 @@ export function Stepper({ steps, currentStepId }: StepperProps) {
             aria-current={isCurrent ? 'step' : undefined}
             data-complete={isComplete ? 'true' : undefined}
           >
-            <span className={styles.dot} aria-hidden="true" />
+            <span className={styles.dot} aria-hidden="true">
+              {isComplete ? '✓' : index + 1}
+            </span>
             {step.label}
           </li>
         );

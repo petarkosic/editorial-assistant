@@ -13,3 +13,5 @@ export type { StepperStep, StepperProps } from './Stepper/Stepper';
 export { ToastProvider, useToast } from './Toast/ToastProvider';
 export { DropdownMenu } from './DropdownMenu/DropdownMenu';
 export type { DropdownMenuItem, DropdownMenuProps } from './DropdownMenu/DropdownMenu';
+export { ProgressLine } from './ProgressLine/ProgressLine';
+export type { ProgressLineProps } from './ProgressLine/ProgressLine';

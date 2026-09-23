@@ -92,7 +92,10 @@ export function NewRunDialog({ open, onOpenChange }: Props) {
 							checked={kind === 'top_stories'}
 							onChange={() => setKind('top_stories')}
 						/>
-						Top stories
+						<span className={styles.choiceText}>
+							<span className={styles.choiceLabel}>Top stories</span>
+							<span className={styles.choiceHint}>Whatever's leading right now</span>
+						</span>
 					</label>
 					<label className={styles.choice}>
 						<input
@@ -101,7 +104,10 @@ export function NewRunDialog({ open, onOpenChange }: Props) {
 							checked={kind === 'category'}
 							onChange={() => setKind('category')}
 						/>
-						Category
+						<span className={styles.choiceText}>
+							<span className={styles.choiceLabel}>Category</span>
+							<span className={styles.choiceHint}>World, business, tech, and more</span>
+						</span>
 					</label>
 					<label className={styles.choice}>
 						<input
@@ -110,7 +116,10 @@ export function NewRunDialog({ open, onOpenChange }: Props) {
 							checked={kind === 'search'}
 							onChange={() => setKind('search')}
 						/>
-						Search
+						<span className={styles.choiceText}>
+							<span className={styles.choiceLabel}>Search</span>
+							<span className={styles.choiceHint}>Scout a specific term</span>
+						</span>
 					</label>
 				</div>
 
