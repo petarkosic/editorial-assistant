@@ -56,6 +56,14 @@ _TOOLS = [
 
 _FINISH_TOOL_CHOICE = {"type": "function", "function": {"name": "finish_research"}}
 
+# Bounded follow-up pass: try to resolve a couple of the brief's own open
+# questions before returning it. Capped low and on its own budget (separate
+# from RESEARCH_MAX_TOOL_CALLS) so it costs at most this many extra LLM
+# calls, and if it doesn't finish in time we just keep the original brief
+# rather than spending another call to force it.
+_FOLLOWUP_MAX_TURNS = 2
+_FOLLOWUP_MAX_QUESTIONS = 2
+
 
 def _system_prompt(finding: AnalysisResult) -> str:
     links = [finding.original_link, *finding.description]
@@ -115,7 +123,51 @@ class ResearchAgent:
             {"role": "user", "content": "Begin researching this story now."},
         ]
 
-        for turn in range(RESEARCH_MAX_TOOL_CALLS):
+        args = self._run_turns(
+            messages, sources, fetcher, on_tool_call, RESEARCH_MAX_TOOL_CALLS
+        )
+        if args is None:
+            args = self._force_finish(messages, on_tool_call)
+
+        open_questions = list(args.get("open_questions", []))
+        if open_questions:
+            to_resolve = open_questions[:_FOLLOWUP_MAX_QUESTIONS]
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Before we finalize: you flagged these open questions:\n"
+                        + "\n".join(f"- {q}" for q in to_resolve)
+                        + f"\n\nYou have at most {_FOLLOWUP_MAX_TURNS} more tool-call "
+                        "turns. Use search/fetch to try to resolve as many of them as "
+                        "you reasonably can, then call finish_research again with the "
+                        "FULL updated brief: move any question you resolved into "
+                        "key_facts (citing what you found), and leave any still-"
+                        "unresolved ones in open_questions. If none of them turn up "
+                        "anything new, just call finish_research again unchanged."
+                    ),
+                }
+            )
+            followup_args = self._run_turns(
+                messages, sources, fetcher, on_tool_call, _FOLLOWUP_MAX_TURNS
+            )
+            if followup_args is not None:
+                args = followup_args
+
+        return self._build_brief(args, sources)
+
+    def _run_turns(
+        self,
+        messages: list[dict],
+        sources: list[SourceDocument],
+        fetcher: ArticleFetcherTool,
+        on_tool_call: Callable[[dict], None] | None,
+        max_turns: int,
+    ) -> dict | None:
+        """Run up to `max_turns` tool-calling turns, mutating `messages`/`sources`
+        in place. Returns the finish_research args once the model calls it, or
+        None if the turn budget runs out first."""
+        for _turn in range(max_turns):
             response = self.client.chat.completions.create(
                 model=MODEL_RESEARCH,
                 messages=messages,
@@ -194,8 +246,15 @@ class ResearchAgent:
                 )
 
             if finished_brief is not None:
-                return self._build_brief(finished_brief, sources)
+                return finished_brief
 
+        return None
+
+    def _force_finish(
+        self,
+        messages: list[dict],
+        on_tool_call: Callable[[dict], None] | None,
+    ) -> dict:
         # Cap reached without finish_research: force it.
         response = self.client.chat.completions.create(
             model=MODEL_RESEARCH,
@@ -226,7 +285,7 @@ class ResearchAgent:
         if on_tool_call is not None:
             on_tool_call(entry)
 
-        return self._build_brief(args, sources)
+        return args
 
     @staticmethod
     def _build_brief(args: dict, sources: list[SourceDocument]) -> ResearchBrief:
