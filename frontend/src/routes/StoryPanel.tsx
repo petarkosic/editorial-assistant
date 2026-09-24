@@ -13,6 +13,10 @@ import {
 	useSelectStories,
 	useStory,
 } from '../queries/runs';
+import {
+	RESEARCHING_MESSAGES,
+	SYNTHESIZING_MESSAGES,
+} from '../lib/progressMessages';
 import { findingTitle, scoreTone } from './run-helpers';
 import styles from './StoryPanel.module.css';
 
@@ -96,13 +100,7 @@ export function StoryPanel({
 			)}
 
 			{story.status === 'researching' && (
-				<ProgressLine
-					messages={[
-						'Reading sources…',
-						'Cross-checking facts…',
-						'Assembling the brief…',
-					]}
-				/>
+				<ProgressLine messages={RESEARCHING_MESSAGES} />
 			)}
 
 			{story.status === 'failed' && (
@@ -226,13 +224,7 @@ export function StoryPanel({
 			)}
 
 			{story.status === 'synthesizing' && (
-				<ProgressLine
-					messages={[
-						'Drafting the piece…',
-						'Tightening the language…',
-						'Almost done…',
-					]}
-				/>
+				<ProgressLine messages={SYNTHESIZING_MESSAGES} />
 			)}
 
 			{['rejected', 'draft_ready', 'approved'].includes(story.status) && (
