@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "feedparser>=6.0.14",
     "googlenewsdecoder>=0.1.7",
+    "langfuse>=4.15.6",
     "openai>=3.14.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",

@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 
 from googlenewsdecoder import gnewsdecoder
+from langfuse import observe
 
 from common.config import MODEL_SCOUT
 from common.llm import get_client, parse_json_response
@@ -94,6 +95,7 @@ class NewsScoutAgent:
 
         return results
 
+    @observe(name="scout.generate_report")
     def generate_scout_report(self, rss_url: str) -> ScoutReport:
         """Never returns None: an empty ScoutReport signals failure."""
         try:

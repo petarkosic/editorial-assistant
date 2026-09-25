@@ -1,6 +1,8 @@
 import json
 from typing import Callable
 
+from langfuse import observe
+
 from common.config import MODEL_RESEARCH, RESEARCH_MAX_TOOL_CALLS
 from common.llm import get_client
 from common.models import AnalysisResult, ResearchBrief, SourceDocument
@@ -110,6 +112,7 @@ class ResearchAgent:
         self.client = client or get_client()
         self.last_trace: list[dict] = []
 
+    @observe(name="research.research_story")
     def research_story(
         self,
         finding: AnalysisResult,

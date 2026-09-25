@@ -1,5 +1,6 @@
 import json
 
+from langfuse import observe
 from pydantic import BaseModel, Field
 
 from common.config import MODEL_JUDGE
@@ -83,6 +84,7 @@ class Judge:
     def __init__(self, client=None):
         self.client = client or get_client()
 
+    @observe(name="judge.evaluate_scout")
     def evaluate_scout(self, scout_report: ScoutReport) -> StageEvaluation:
         findings = [
             {
@@ -113,6 +115,7 @@ class Judge:
 
         return StageEvaluation(**data)
 
+    @observe(name="judge.evaluate_research")
     def evaluate_research(
         self,
         brief: ResearchBrief,
