@@ -1,7 +1,9 @@
 import json
+import logging
 from datetime import datetime
 
 from langfuse import observe
+from pydantic import BaseModel, Field
 
 from common.config import MODEL_SCOUT
 from common.gnews import decode_google_news_url
@@ -9,29 +11,39 @@ from common.llm import get_client, parse_json_response
 from common.models import AnalysisResult, NewsArticle, ScoutReport
 from scout_agent.tools import NewsFetcherTool
 
+logger = logging.getLogger("scout_agent.agent")
+
 SYSTEM_PROMPT = """You are an assistant editor at a major news organization. Your sole task is to monitor incoming news feeds and identify the most important and breaking stories.
 
 INSTRUCTIONS:
-1. Analyze the provided list of recent news articles.
+1. Analyze the provided list of recent news articles. Each has an integer "id", a title, a source, a publication date, and "related_articles" (how many other outlets cover the same story).
 2. Ignore minor updates, trivial stories, and redundant information. Focus on impact, novelty, and public interest.
 3. For each article that is important or breaking news (importance_score >= 5):
+   - Refer to it by its "id", exactly as given.
    - Provide a RELEVANCE SCORE from 1-10 (10 is most important).
    - Write a concise ONE-SENTENCE SUMMARY of the story's significance.
    - Include brief reasoning for your score.
-4. Return your analysis as a valid JSON array of objects.
+4. Return your analysis as a valid JSON array of objects. Do not repeat titles or links. If nothing is important, return [].
 
 JSON FORMAT:
 [
   {
+    "id": 3,
     "importance_score": 8,
     "summary": "A concise sentence explaining the story's impact and why it matters.",
-    "original_title": "The original headline here",
-    "original_link": "The original link here",
-    "reasoning": "Brief explanation of why this score was assigned",
-    "description": ["Link to related news articles"]
+    "reasoning": "Brief explanation of why this score was assigned"
   }
 ]
 """
+
+
+class _ScoutItem(BaseModel):
+    """One finding as returned by the model. Only judgement, never article data."""
+
+    id: int
+    importance_score: int = Field(..., ge=1, le=10)
+    summary: str
+    reasoning: str | None = None
 
 
 class NewsScoutAgent:
@@ -44,13 +56,13 @@ class NewsScoutAgent:
     def analyze_articles(self, articles: list[NewsArticle]) -> list[AnalysisResult]:
         articles_data = [
             {
+                "id": i,
                 "title": a.title,
-                "link": a.link,
                 "source": a.source,
                 "pub_date": a.pub_date.isoformat() if a.pub_date else "Unknown",
-                "description": a.description,
+                "related_articles": len(a.description),
             }
-            for a in articles
+            for i, a in enumerate(articles)
         ]
         user_prompt = (
             "Please analyze the following batch of articles:\n\n"
@@ -73,23 +85,29 @@ class NewsScoutAgent:
         if not isinstance(analysis_data, list):
             raise ValueError("Scout model did not return a JSON array of findings")
 
+        articles_by_id = dict(enumerate(articles))
+        seen: set[int] = set()
         results: list[AnalysisResult] = []
-        for item in analysis_data:
-            original = next(
-                (a for a in articles if a.title == item.get("original_title")), None
-            )
-            if original is None:
+        for raw in analysis_data:
+            item = _ScoutItem.model_validate(raw)
+            article = articles_by_id.get(item.id)
+            if article is None or item.id in seen:
+                logger.warning(
+                    "scout: ignoring finding with unknown or repeated id %s", item.id
+                )
                 continue
+
+            seen.add(item.id)
             results.append(
                 AnalysisResult(
-                    importance_score=item["importance_score"],
-                    summary=item["summary"],
-                    original_title=item["original_title"],
-                    original_link=decode_google_news_url(item["original_link"]),
-                    reasoning=item.get("reasoning"),
-                    description=item.get("description", []),
-                    source=original.source,
-                    pub_date=original.pub_date,
+                    importance_score=item.importance_score,
+                    summary=item.summary,
+                    original_title=article.title,
+                    original_link=decode_google_news_url(article.link),
+                    reasoning=item.reasoning,
+                    description=article.description,
+                    source=article.source,
+                    pub_date=article.pub_date,
                 )
             )
 
