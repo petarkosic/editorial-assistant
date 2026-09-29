@@ -1,10 +1,10 @@
 import json
 from datetime import datetime
 
-from googlenewsdecoder import gnewsdecoder
 from langfuse import observe
 
 from common.config import MODEL_SCOUT
+from common.gnews import decode_google_news_url
 from common.llm import get_client, parse_json_response
 from common.models import AnalysisResult, NewsArticle, ScoutReport
 from scout_agent.tools import NewsFetcherTool
@@ -66,12 +66,12 @@ class NewsScoutAgent:
             temperature=0.2,
         )
         response_text = response.choices[0].message.content
+        if not response_text:
+            raise ValueError("Scout model returned an empty response")
 
-        try:
-            analysis_data = parse_json_response(response_text)
-        except ValueError as exc:
-            print(f"Error parsing AI response: {exc}")
-            return []
+        analysis_data = parse_json_response(response_text)
+        if not isinstance(analysis_data, list):
+            raise ValueError("Scout model did not return a JSON array of findings")
 
         results: list[AnalysisResult] = []
         for item in analysis_data:
@@ -85,7 +85,7 @@ class NewsScoutAgent:
                     importance_score=item["importance_score"],
                     summary=item["summary"],
                     original_title=item["original_title"],
-                    original_link=self.decode_google_news_url(item["original_link"]),
+                    original_link=decode_google_news_url(item["original_link"]),
                     reasoning=item.get("reasoning"),
                     description=item.get("description", []),
                     source=original.source,
@@ -97,37 +97,20 @@ class NewsScoutAgent:
 
     @observe(name="scout.generate_report")
     def generate_scout_report(self, rss_url: str) -> ScoutReport:
-        """Never returns None: an empty ScoutReport signals failure."""
-        try:
-            articles = self.news_fetcher.fetch_news_from_rss(rss_url)
-            if not articles:
-                raise RuntimeError("No news articles found in the feed.")
+        """Raises on any failure (feed, LLM call, bad response).
 
-            analyses = self.analyze_articles(articles)
-            important = [r for r in analyses if r.importance_score >= 5]
+        An empty `important_findings` therefore always means the scout ran and
+        found nothing important - never that it failed.
+        """
+        articles = self.news_fetcher.fetch_news_from_rss(rss_url)
+        if not articles:
+            raise RuntimeError("No news articles found in the feed.")
 
-            return ScoutReport(
-                generated_at=datetime.now(),
-                analyzed_articles=len(articles),
-                important_findings=important,
-            )
-        except Exception as exc:
-            print(f"Error generating scout report: {exc}")
+        analyses = self.analyze_articles(articles)
+        important = [r for r in analyses if r.importance_score >= 5]
 
-            return ScoutReport(
-                generated_at=datetime.now(), analyzed_articles=0, important_findings=[]
-            )
-
-    def decode_google_news_url(self, url: str) -> str:
-        try:
-            decoded = gnewsdecoder(url, interval=1)
-            if decoded.get("status"):
-                return decoded["decoded_url"]
-
-            print(f"Error decoding URL {url}: {decoded.get('message')}")
-
-            return url
-        except Exception as exc:
-            print(f"Exception decoding URL {url}: {exc}")
-            
-            return url
+        return ScoutReport(
+            generated_at=datetime.now(),
+            analyzed_articles=len(articles),
+            important_findings=important,
+        )

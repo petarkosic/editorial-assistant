@@ -70,10 +70,12 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 				</p>
 			) : null}
 
-			<p className={styles.summary}>
-				Analysed {analysed} {analysed === 1 ? 'article' : 'articles'} · {found}{' '}
-				{found === 1 ? 'story' : 'stories'} found
-			</p>
+			{run.status === 'failed' ? null : (
+				<p className={styles.summary}>
+					Analysed {analysed} {analysed === 1 ? 'article' : 'articles'} ·{' '}
+					{found} {found === 1 ? 'story' : 'stories'} found
+				</p>
+			)}
 
 			{evaluation ? (
 				<div className={styles.qualityBlock}>
@@ -140,7 +142,11 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 
 			{run.status === 'scouting' ? null : found === 0 ? (
 				<div className={styles.empty}>
-					<p>No important stories in this run.</p>
+					<p>
+						{run.status === 'failed'
+							? 'Nothing to review for a failed run.'
+							: 'No important stories in this run.'}
+					</p>
 					<Button
 						variant='danger'
 						onClick={handleDelete}
