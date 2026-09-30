@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from langfuse import observe
@@ -16,7 +17,9 @@ _TOOLS = [
         "function": {
             "name": "search",
             "description": "Search the web for background on the story. Returns a list of "
-            "{title, url, snippet} results, or an empty list if nothing was found.",
+            "{title, url, snippet} results, or an empty list if nothing was found. "
+            "Takes exactly one query string per call; to run several searches, make "
+            "several separate search calls.",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -67,6 +70,10 @@ _FINISH_TOOL_CHOICE = {"type": "function", "function": {"name": "finish_research
 _FOLLOWUP_MAX_TURNS = 2
 _FOLLOWUP_MAX_QUESTIONS = 2
 
+# Tools that do network I/O and are safe to run side by side within one turn.
+_IO_TOOLS = ("search", "fetch")
+_MAX_PARALLEL_TOOLS = 5
+
 
 def _starting_links(finding: AnalysisResult) -> list[str]:
     """The story's own link plus related-coverage links, as real article URLs.
@@ -105,8 +112,11 @@ RULES:
 - Never invent facts that are not present in a tool result. If sourcing is thin,
   say so in `background` and record it in `fact_check_flags` rather than guessing.
 - You have at most {RESEARCH_MAX_TOOL_CALLS} tool-call turns before you are forced to
-  finish. A single turn may contain several tool calls at once (e.g. three `fetch`
-  calls together), so batch independent calls instead of spending a turn on each.
+  finish. A single turn may contain several tool calls at once (e.g. three separate
+  `fetch` calls, each with its own `url`), so issue independent calls together
+  instead of spending a turn on each. Every call takes a single `query` or `url`.
+- Only fetch URLs that appeared in the starting links or in search results. Never
+  guess or reconstruct a URL from memory.
 - Search snippets are NOT enough to ground a brief. Before calling
   `finish_research` you must `fetch` the 2-3 most relevant URLs (the starting links
   first, then the best search results) and base your key_facts on the fetched text.
@@ -117,9 +127,47 @@ RULES:
 """
 
 
+def _run_io_tool(name: str, args: dict, fetcher: ArticleFetcherTool):
+    """Run one `search` or `fetch` call. Returns (result, tool_message_content).
+
+    Touches no shared state, so it is safe to call from a worker thread.
+    """
+    if name == "search":
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return [], json.dumps(
+                {
+                    "error": "search needs a non-empty string argument named "
+                    "'query'. Make one search call per query."
+                }
+            )
+
+        result = search(query)
+
+        return result, json.dumps({"untrusted_search_results": result})
+
+    text, doc = fetcher.fetch(args.get("url", ""))
+
+    return (text, doc), json.dumps(
+        {"untrusted_fetched_text": text, "fetch_status": doc.fetch_status}
+    )
+
+
+def _run_io_tools(jobs: list[tuple[str, dict]], fetcher: ArticleFetcherTool) -> list:
+    """Run search/fetch calls side by side; results keep the order of `jobs`."""
+    if len(jobs) <= 1:
+        return [_run_io_tool(name, args, fetcher) for name, args in jobs]
+
+    with ThreadPoolExecutor(max_workers=min(len(jobs), _MAX_PARALLEL_TOOLS)) as pool:
+        return list(pool.map(lambda job: _run_io_tool(*job, fetcher), jobs))
+
+
 def _result_summary(tool: str, args: dict, result) -> str:
     if tool == "search":
-        return f"{len(result)} result(s) for {args.get('query', '')!r}"
+        if not isinstance(args.get("query"), str) or not args["query"].strip():
+            return "invalid search call: missing 'query' argument"
+
+        return f"{len(result)} result(s) for {args['query']!r}"
 
     if tool == "fetch":
         doc: SourceDocument = result[1]
@@ -233,25 +281,32 @@ class ResearchAgent:
                 }
             )
 
-            finished_brief = None
+            calls = []
             for tc in tool_calls:
-                name = tc.function.name
                 try:
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
 
-                if name == "search":
-                    result = search(args.get("query", ""))
-                    tool_content = json.dumps({"untrusted_search_results": result})
-                elif name == "fetch":
-                    url = args.get("url", "")
-                    text, doc = fetcher.fetch(url)
-                    sources.append(doc)
-                    result = (text, doc)
-                    tool_content = json.dumps(
-                        {"untrusted_fetched_text": text, "fetch_status": doc.fetch_status}
-                    )
+                calls.append((tc, tc.function.name, args))
+
+            # Phase 1: the slow network calls run side by side.
+            io_outputs = iter(
+                _run_io_tools(
+                    [(name, args) for _, name, args in calls if name in _IO_TOOLS],
+                    fetcher,
+                )
+            )
+
+            # Phase 2: record results one at a time, in the model's order. This
+            # must stay sequential: on_tool_call read-modify-writes the trace
+            # artifact, so concurrent calls would overwrite each other's entries.
+            finished_brief = None
+            for tc, name, args in calls:
+                if name in _IO_TOOLS:
+                    result, tool_content = next(io_outputs)
+                    if name == "fetch":
+                        sources.append(result[1])
                 elif name == "finish_research":
                     result = args
                     tool_content = "acknowledged"
