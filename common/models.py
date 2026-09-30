@@ -26,6 +26,9 @@ class ScoutReport(BaseModel):
     generated_at: datetime
     analyzed_articles: int
     important_findings: list[AnalysisResult]
+    # Headlines the scout read but did not keep, so the judge can check that
+    # nothing important was dropped. Empty on reports saved before this existed.
+    excluded_articles: list[str] = Field(default_factory=list)
 
 
 class SourceDocument(BaseModel):

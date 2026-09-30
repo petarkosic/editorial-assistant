@@ -131,11 +131,13 @@ class NewsScoutAgent:
 
         analyses = self.analyze_articles(articles)
         important = [r for r in analyses if r.importance_score >= 5]
+        kept_titles = {r.original_title for r in important}
 
         return ScoutReport(
             generated_at=datetime.now(),
             analyzed_articles=len(articles),
             important_findings=important,
+            excluded_articles=[a.title for a in articles if a.title not in kept_titles],
         )
 
     def resolve_original_links(self, report: ScoutReport) -> ScoutReport:

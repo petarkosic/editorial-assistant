@@ -21,6 +21,8 @@ _SCOUT_SYSTEM_PROMPT = """You are an expert editor evaluating the quality of an 
 
 The scout was given a batch of recent articles and asked to keep only the important
 or breaking ones, each with a 1-10 importance score, a one-sentence summary, and brief reasoning.
+You are shown the findings it kept and, when available, the headlines it excluded. Use the
+excluded headlines only to judge the Relevance criterion: did it drop anything that looks major?
 
 Evaluate the report as a whole on these criteria, each scored 1-5 (5 = excellent):
 1. Importance Score Accuracy - are the 1-10 importance scores appropriate for the stories?
@@ -101,6 +103,11 @@ class Judge:
             f"Important findings kept ({len(findings)}):\n"
             + json.dumps(findings, indent=2)
         )
+        if scout_report.excluded_articles:
+            user_prompt += (
+                f"\n\nHeadlines the scout excluded ({len(scout_report.excluded_articles)}):\n"
+                + "\n".join(f"- {title}" for title in scout_report.excluded_articles)
+            )
 
         response = self.client.chat.completions.create(
             model=MODEL_JUDGE,
