@@ -3,6 +3,8 @@ import logging
 import uuid
 from urllib.parse import quote_plus
 
+import openai
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from backend import repositories as repo
@@ -16,6 +18,27 @@ from research_agent.agent import ResearchAgent
 from scout_agent.agent import NewsScoutAgent
 
 logger = logging.getLogger("backend.pipeline")
+
+def friendly_error(exc: BaseException) -> str:
+    """A message that is safe to show in the UI; the full exception is logged."""
+    if isinstance(exc, openai.RateLimitError):
+        return "The AI provider is rate limiting requests. Wait a minute, then retry."
+    if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
+        return "The AI provider rejected the API key. Check the key and try again."
+    if isinstance(exc, openai.APIConnectionError):
+        return "Couldn't reach the AI provider. Check the connection and try again."
+    if isinstance(exc, openai.APIStatusError):
+        return (
+            f"The AI provider returned an error (HTTP {exc.status_code}). "
+            "Try again shortly."
+        )
+    if isinstance(exc, ValidationError):
+        return "The AI returned a response in an unexpected format. Try again."
+    if isinstance(exc, (ValueError, RuntimeError)):
+        return str(exc)
+
+    return "Something went wrong. Check the server logs for details."
+
 
 _GNEWS = "https://news.google.com/rss"
 _GNEWS_LOCALE = "hl=en-US&gl=US&ceid=US:en"
@@ -93,9 +116,20 @@ async def run_scout_task(run_id: str, session_factory=SessionLocal) -> None:
             await session.commit()
 
             rss_url = build_rss_url(run.source_kind, run.source_query)
-            report = await run_in_thread(
-                NewsScoutAgent().generate_scout_report, rss_url
+            agent = NewsScoutAgent()
+            report = await run_in_thread(agent.generate_scout_report, rss_url)
+
+            # The judge reads scores and summaries, never links, so it can run
+            # while the links are being decoded.
+            stage_eval, resolved = await asyncio.gather(
+                run_in_thread(Judge().evaluate_scout, report),
+                run_in_thread(agent.resolve_original_links, report),
+                return_exceptions=True,
             )
+            if isinstance(resolved, BaseException):
+                raise resolved
+
+            report = resolved
             report_json = report.model_dump(mode="json")
 
             store = get_store()
@@ -111,8 +145,13 @@ async def run_scout_task(run_id: str, session_factory=SessionLocal) -> None:
                 )
             )
 
-            try:
-                stage_eval = await run_in_thread(Judge().evaluate_scout, report)
+            if isinstance(stage_eval, BaseException):
+                logger.error(
+                    "scout judge failed for run %s - continuing (advisory only)",
+                    run_id,
+                    exc_info=stage_eval,
+                )
+            else:
                 session.add(
                     Evaluation(
                         run_id=run.id,
@@ -124,11 +163,6 @@ async def run_scout_task(run_id: str, session_factory=SessionLocal) -> None:
                         weaknesses=list(stage_eval.weaknesses),
                         suggestions=stage_eval.suggestions,
                     )
-                )
-            except Exception:
-                logger.exception(
-                    "scout judge failed for run %s - continuing (advisory only)",
-                    run_id,
                 )
 
             for finding in report.important_findings:
@@ -154,7 +188,7 @@ async def run_scout_task(run_id: str, session_factory=SessionLocal) -> None:
             run = await session.get(Run, uuid.UUID(str(run_id)))
             if run is not None:
                 run.status = "failed"
-                run.error = str(exc)
+                run.error = friendly_error(exc)
                 await session.commit()
 
 
@@ -272,7 +306,7 @@ async def run_research_task(story_id: str, session_factory=SessionLocal) -> None
             story = await session.get(Story, uuid.UUID(str(story_id)))
             if story is not None:
                 story.status = "failed"
-                story.error = str(exc)
+                story.error = friendly_error(exc)
                 await session.commit()
 
 

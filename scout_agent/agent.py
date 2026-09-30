@@ -1,5 +1,6 @@
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from langfuse import observe
@@ -12,6 +13,9 @@ from common.models import AnalysisResult, NewsArticle, ScoutReport
 from scout_agent.tools import NewsFetcherTool
 
 logger = logging.getLogger("scout_agent.agent")
+
+# Kept small: each decode is a request to Google, which throttles bursts.
+_MAX_PARALLEL_DECODES = 4
 
 SYSTEM_PROMPT = """You are an assistant editor at a major news organization. Your sole task is to monitor incoming news feeds and identify the most important and breaking stories.
 
@@ -103,7 +107,7 @@ class NewsScoutAgent:
                     importance_score=item.importance_score,
                     summary=item.summary,
                     original_title=article.title,
-                    original_link=decode_google_news_url(article.link),
+                    original_link=article.link,
                     reasoning=item.reasoning,
                     description=article.description,
                     source=article.source,
@@ -118,7 +122,8 @@ class NewsScoutAgent:
         """Raises on any failure (feed, LLM call, bad response).
 
         An empty `important_findings` therefore always means the scout ran and
-        found nothing important - never that it failed.
+        found nothing important - never that it failed. `original_link` is still
+        the raw Google News link; call `resolve_original_links` for the real URL.
         """
         articles = self.news_fetcher.fetch_news_from_rss(rss_url)
         if not articles:
@@ -131,4 +136,31 @@ class NewsScoutAgent:
             generated_at=datetime.now(),
             analyzed_articles=len(articles),
             important_findings=important,
+        )
+
+    def resolve_original_links(self, report: ScoutReport) -> ScoutReport:
+        """Decode each finding's Google News link to the publisher's URL, concurrently.
+
+        Returns a new report and leaves the input untouched, so it can safely
+        overlap with other readers of that report. Never raises: a link that
+        can't be decoded is kept as-is.
+        """
+        findings = report.important_findings
+        if not findings:
+            return report
+
+        with ThreadPoolExecutor(
+            max_workers=min(len(findings), _MAX_PARALLEL_DECODES)
+        ) as pool:
+            links = list(
+                pool.map(decode_google_news_url, (f.original_link for f in findings))
+            )
+
+        return report.model_copy(
+            update={
+                "important_findings": [
+                    f.model_copy(update={"original_link": link})
+                    for f, link in zip(findings, links)
+                ]
+            }
         )
