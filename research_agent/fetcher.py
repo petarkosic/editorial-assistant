@@ -1,6 +1,9 @@
 import hashlib
+import ipaddress
 import os
 import re
+import socket
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -17,6 +20,48 @@ _PAYWALL_MARKERS = (
 )
 
 _STRIP_TAGS = ("script", "style", "nav", "header", "footer")
+
+_ALLOWED_PORTS = (80, 443)
+_MAX_REDIRECTS = 5
+_MAX_DOWNLOAD_BYTES = 2_000_000
+_TEXT_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "text/plain")
+
+
+def _url_verdict(url: str) -> str | None:
+    """None if `url` is safe to request, else the fetch_status to report.
+
+    The model picks the URL and the server makes the request, so this must
+    refuse anything that could reach internal services (SSRF): only http(s) on
+    standard ports, and every address the host resolves to must be public.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return "blocked"
+
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return "blocked"
+
+    if port not in _ALLOWED_PORTS:
+        return "blocked"
+
+    try:
+        infos = socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return "error"
+
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        except ValueError:
+            return "blocked"
+
+        ip = getattr(ip, "ipv4_mapped", None) or ip
+        if not ip.is_global:
+            return "blocked"
+
+    return None
 
 
 def _url_hash(url: str) -> str:
@@ -76,26 +121,66 @@ class ArticleFetcherTool:
 
             return capped, SourceDocument(url=url, fetch_status="ok", char_count=len(capped))
 
+        response = None
+        current = url
+
         try:
-            response = requests.get(
-                url,
-                headers={"User-Agent": FETCH_USER_AGENT},
-                timeout=FETCH_TIMEOUT_SECONDS,
-            )
-        except requests.Timeout:
-            return "", SourceDocument(url=url, fetch_status="error", char_count=0)
-        except requests.ConnectionError:
-            return "", SourceDocument(url=url, fetch_status="error", char_count=0)
+            # Redirects are followed by hand so every hop is checked: a public
+            # URL must not be able to bounce us to an internal address.
+            for _ in range(_MAX_REDIRECTS + 1):
+                verdict = _url_verdict(current)
+                if verdict is not None:
+                    return "", SourceDocument(url=url, fetch_status=verdict, char_count=0)
+
+                response = requests.get(
+                    current,
+                    headers={"User-Agent": FETCH_USER_AGENT},
+                    timeout=FETCH_TIMEOUT_SECONDS,
+                    allow_redirects=False,
+                    stream=True,
+                )
+
+                location = response.headers.get("Location")
+                if not (response.is_redirect and location):
+                    break
+
+                response.close()
+                current = urljoin(current, location)
+            else:
+                return "", SourceDocument(url=url, fetch_status="error", char_count=0)
+
+            return self._read_response(response, url)
         except Exception:
             return "", SourceDocument(url=url, fetch_status="error", char_count=0)
+        finally:
+            if response is not None:
+                response.close()
 
+    @staticmethod
+    def _read_response(response, url: str) -> tuple[str, SourceDocument]:
         if response.status_code in (401, 403):
             return "", SourceDocument(url=url, fetch_status="blocked", char_count=0)
-            
+
         if response.status_code != 200:
             return "", SourceDocument(url=url, fetch_status="error", char_count=0)
 
-        text = _extract_text(response.text)
+        content_type = response.headers.get("Content-Type", "").lower()
+        if content_type and not content_type.startswith(_TEXT_CONTENT_TYPES):
+            return "", SourceDocument(url=url, fetch_status="skipped", char_count=0)
+
+        body = bytearray()
+        for chunk in response.iter_content(chunk_size=16384):
+            body.extend(chunk)
+            if len(body) >= _MAX_DOWNLOAD_BYTES:
+                del body[_MAX_DOWNLOAD_BYTES:]
+                break
+
+        try:
+            html = body.decode(response.encoding or "utf-8", errors="replace")
+        except LookupError:
+            html = body.decode("utf-8", errors="replace")
+
+        text = _extract_text(html)
         if _looks_paywalled(text):
             return "", SourceDocument(url=url, fetch_status="blocked", char_count=0)
 
