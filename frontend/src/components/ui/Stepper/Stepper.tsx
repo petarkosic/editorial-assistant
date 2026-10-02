@@ -8,24 +8,29 @@ export interface StepperStep {
 export interface StepperProps {
   steps: StepperStep[];
   currentStepId: string;
+  /** 'success': every step is done. 'danger': the current step failed or was rejected. */
+  outcome?: 'success' | 'danger';
 }
 
-export function Stepper({ steps, currentStepId }: StepperProps) {
+export function Stepper({ steps, currentStepId, outcome }: StepperProps) {
   const currentIndex = steps.findIndex((s) => s.id === currentStepId);
   return (
     <ol className={styles.list}>
       {steps.map((step, index) => {
         const isCurrent = step.id === currentStepId;
-        const isComplete = currentIndex >= 0 && index < currentIndex;
+        const isComplete =
+          outcome === 'success' || (currentIndex >= 0 && index < currentIndex);
+        const isFailed = outcome === 'danger' && isCurrent;
         return (
           <li
             key={step.id}
             className={styles.step}
             aria-current={isCurrent ? 'step' : undefined}
             data-complete={isComplete ? 'true' : undefined}
+            data-outcome={outcome === 'success' ? 'success' : isFailed ? 'danger' : undefined}
           >
             <span className={styles.dot} aria-hidden="true">
-              {isComplete ? '✓' : index + 1}
+              {isComplete ? '✓' : isFailed ? '✕' : index + 1}
             </span>
             {step.label}
           </li>

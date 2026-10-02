@@ -10,8 +10,10 @@ import {
 	rejectStory,
 	retryStory,
 	selectStories,
+	updateDraft,
 	type RunDetail,
 	type StoryDetail,
+	type UpdateDraftBody,
 } from '../api/runs';
 
 export const runKeys = {
@@ -117,6 +119,16 @@ export function useRejectStory(runId: string, storyId: string) {
 
 export function useRetryStory(runId: string, storyId: string) {
 	return useStoryAction(runId, storyId, retryStory);
+}
+
+export function useUpdateDraft(runId: string, storyId: string) {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: UpdateDraftBody) => updateDraft(runId, storyId, body),
+		onSuccess: (story) => {
+			qc.setQueryData(runKeys.story(runId, storyId), story);
+		},
+	});
 }
 
 export function useReevaluateStory(runId: string, storyId: string) {

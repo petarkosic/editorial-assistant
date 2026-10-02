@@ -100,6 +100,22 @@ export interface ResearchBrief {
 	sources: ResearchBriefSource[];
 }
 
+export interface ArticleDraft {
+	headline: string;
+	lede: string;
+	body: string[];
+	key_points: string[];
+	sources_cited: string[];
+	based_on_title: string;
+	generated_at: string;
+	edited: boolean;
+}
+
+export type UpdateDraftBody = Pick<
+	ArticleDraft,
+	'headline' | 'lede' | 'body' | 'key_points' | 'sources_cited'
+>;
+
 export interface StoryDetail {
 	id: string;
 	run_id: string;
@@ -110,7 +126,7 @@ export interface StoryDetail {
 	research_brief: ResearchBrief | null;
 	research_trace: { tool_calls: ToolCallTraceEntry[] } | null;
 	research_evaluation: EvaluationOut | null;
-	article_draft: unknown | null;
+	article_draft: ArticleDraft | null;
 	draft_evaluation: EvaluationOut | null;
 }
 
@@ -132,6 +148,14 @@ export function rejectStory(runId: string, storyId: string): Promise<StoryDetail
 
 export function retryStory(runId: string, storyId: string): Promise<StoryDetail> {
 	return api.post<StoryDetail>(`/runs/${runId}/stories/${storyId}/retry`);
+}
+
+export function updateDraft(
+	runId: string,
+	storyId: string,
+	body: UpdateDraftBody,
+): Promise<StoryDetail> {
+	return api.put<StoryDetail>(`/runs/${runId}/stories/${storyId}/draft`, body);
 }
 
 export function reevaluateStory(runId: string, storyId: string): Promise<StoryDetail> {

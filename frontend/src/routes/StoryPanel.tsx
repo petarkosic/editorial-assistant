@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { StoryDetail } from '../api/runs';
 import {
 	Badge,
 	Button,
@@ -8,7 +9,6 @@ import {
 } from '../components/ui';
 import {
 	useApproveStory,
-	useRejectStory,
 	useRetryStory,
 	useSelectStories,
 	useStory,
@@ -17,6 +17,7 @@ import {
 	RESEARCHING_MESSAGES,
 	SYNTHESIZING_MESSAGES,
 } from '../lib/progressMessages';
+import { DraftSection } from './DraftSection';
 import { findingTitle, scoreTone } from './run-helpers';
 import styles from './StoryPanel.module.css';
 
@@ -26,28 +27,46 @@ const STEPS: StepperStep[] = [
 	{ id: 'synthesis', label: 'Synthesis' },
 ];
 
-function currentStepId(status: string): string {
-	if (status === 'pending') return 'scout';
-	if (
-		status === 'synthesizing' ||
-		status === 'draft_ready' ||
-		status === 'approved'
-	) {
-		return 'synthesis';
+function stepperFor(story: StoryDetail): {
+	stepId: string;
+	outcome?: 'success' | 'danger';
+} {
+	switch (story.status) {
+		case 'pending':
+			return { stepId: 'scout' };
+		case 'synthesizing':
+		case 'draft_ready':
+			return { stepId: 'synthesis' };
+		case 'approved':
+			return { stepId: 'synthesis', outcome: 'success' };
+		case 'rejected':
+			// Only a draft or a research brief can be rejected: the one that exists
+			// tells us which stage it was.
+			return {
+				stepId: story.article_draft ? 'synthesis' : 'research',
+				outcome: 'danger',
+			};
+		case 'failed':
+			return {
+				stepId: story.research_brief ? 'synthesis' : 'research',
+				outcome: 'danger',
+			};
+		default:
+			return { stepId: 'research' };
 	}
-	return 'research';
 }
 
 export function StoryPanel({
 	runId,
 	storyId,
+	onDirtyChange,
 }: {
 	runId: string;
 	storyId: string;
+	onDirtyChange?: (dirty: boolean) => void;
 }) {
 	const { data: story, isLoading } = useStory(runId, storyId);
 	const approve = useApproveStory(runId, storyId);
-	const reject = useRejectStory(runId, storyId);
 	const retry = useRetryStory(runId, storyId);
 	const selectOne = useSelectStories(runId);
 	const [scorecardOpen, setScorecardOpen] = useState(false);
@@ -56,9 +75,15 @@ export function StoryPanel({
 		return <div className={styles.panel}>Loading…</div>;
 	}
 
+	const stepper = stepperFor(story);
+
 	return (
 		<div className={styles.panel}>
-			<Stepper steps={STEPS} currentStepId={currentStepId(story.status)} />
+			<Stepper
+				steps={STEPS}
+				currentStepId={stepper.stepId}
+				outcome={stepper.outcome}
+			/>
 
 			<section>
 				<h2 className={styles.title}>{findingTitle(story.finding)}</h2>
@@ -210,14 +235,7 @@ export function StoryPanel({
 							onClick={() => approve.mutate()}
 							isLoading={approve.isPending}
 						>
-							Approve
-						</Button>
-						<Button
-							variant='secondary'
-							onClick={() => reject.mutate()}
-							isLoading={reject.isPending}
-						>
-							Reject
+							Write draft
 						</Button>
 					</div>
 				</>
@@ -227,8 +245,22 @@ export function StoryPanel({
 				<ProgressLine messages={SYNTHESIZING_MESSAGES} />
 			)}
 
-			{['rejected', 'draft_ready', 'approved'].includes(story.status) && (
-				<p>Status: {story.status}</p>
+			{(story.status === 'draft_ready' || story.status === 'approved') &&
+				story.article_draft && (
+					<DraftSection
+						runId={runId}
+						storyId={storyId}
+						story={story}
+						draft={story.article_draft}
+						onDirtyChange={onDirtyChange}
+					/>
+				)}
+
+			{story.status === 'rejected' && (
+				<div className={styles.rejectedNote} role='status'>
+					<strong>Rejected</strong> at the{' '}
+					{story.article_draft ? 'draft' : 'research'} stage.
+				</div>
 			)}
 		</div>
 	);

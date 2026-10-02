@@ -70,3 +70,22 @@
   background: var(--color-primary);
   color: var(--color-primary-contrast);
 }
+
+/* Outcomes come last so they win over the plain complete/current styles. */
+.step[data-outcome='success']::before {
+  background: var(--color-success);
+}
+
+.step[data-outcome='success'] .dot {
+  background: var(--color-success);
+  color: var(--color-primary-contrast);
+}
+
+.step[data-outcome='danger'] {
+  color: var(--color-danger);
+}
+
+.step[data-outcome='danger'] .dot {
+  background: var(--color-danger);
+  color: var(--color-primary-contrast);
+}

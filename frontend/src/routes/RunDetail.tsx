@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useDeleteRun, useRun, useSelectStories } from '../queries/runs';
-import { Badge, Button, ProgressLine } from '../components/ui';
+import { Badge, Button, Dialog, ProgressLine } from '../components/ui';
 import { SCOUTING_MESSAGES } from '../lib/progressMessages';
 import { findingTitle, runLabel, scoreTone, statusTone } from './run-helpers';
 import { StoryPanel } from './StoryPanel';
@@ -20,6 +20,11 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 	const [scoreOpen, setScoreOpen] = useState(false);
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 	const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+	const [hasUnsavedEdits, setHasUnsavedEdits] = useState(false);
+	// Where the user was heading when we stopped them to ask about unsaved edits.
+	const [pendingSwitch, setPendingSwitch] = useState<{ to: string | null } | null>(
+		null,
+	);
 
 	if (isLoading)
 		return (
@@ -50,6 +55,23 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 			else next.add(storyId);
 			return next;
 		});
+	}
+
+	function requestSelectStory(to: string | null) {
+		if (to === selectedStoryId) return;
+
+		if (hasUnsavedEdits) {
+			setPendingSwitch({ to });
+			return;
+		}
+
+		setSelectedStoryId(to);
+	}
+
+	function discardEditsAndSwitch() {
+		setHasUnsavedEdits(false);
+		setSelectedStoryId(pendingSwitch?.to ?? null);
+		setPendingSwitch(null);
 	}
 
 	return (
@@ -202,7 +224,7 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 										type='button'
 										className={styles.storyButton}
 										data-active={story.id === selectedStoryId}
-										onClick={() => setSelectedStoryId(story.id)}
+										onClick={() => requestSelectStory(story.id)}
 									>
 										<span
 											className={styles.storyTitle}
@@ -225,7 +247,7 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 								<button
 									type='button'
 									className={styles.backButton}
-									onClick={() => setSelectedStoryId(null)}
+									onClick={() => requestSelectStory(null)}
 								>
 									<svg
 										width='18'
@@ -241,7 +263,12 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 									</svg>
 									Stories
 								</button>
-								<StoryPanel runId={id!} storyId={selectedStoryId} />
+								<StoryPanel
+									key={selectedStoryId}
+									runId={id!}
+									storyId={selectedStoryId}
+									onDirtyChange={setHasUnsavedEdits}
+								/>
 							</>
 						) : (
 							<p className={styles.pickHint}>Select a story to review it.</p>
@@ -249,6 +276,24 @@ function RunDetailForRun({ id }: { id: string | undefined }) {
 					</aside>
 				</div>
 			)}
+
+			<Dialog
+				open={pendingSwitch !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingSwitch(null);
+				}}
+				title='Discard your changes?'
+				description='You have unsaved edits to this draft. If you switch stories now, they will be lost.'
+			>
+				<div className={styles.confirmActions}>
+					<Button variant='secondary' onClick={() => setPendingSwitch(null)}>
+						Keep editing
+					</Button>
+					<Button variant='danger' onClick={discardEditsAndSwitch}>
+						Discard changes
+					</Button>
+				</div>
+			</Dialog>
 		</div>
 	);
 }

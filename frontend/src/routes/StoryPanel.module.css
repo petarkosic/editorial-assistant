@@ -110,3 +110,12 @@ section ul {
 .actions > * {
   flex: 1;
 }
+
+.rejectedNote {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font-size: 13px;
+  line-height: 1.5;
+}
