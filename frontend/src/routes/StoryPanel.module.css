@@ -112,6 +112,11 @@ section ul {
 }
 
 .rejectedNote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
   background: var(--color-danger-bg);
   color: var(--color-danger);
   border-radius: var(--radius-md);

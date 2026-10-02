@@ -146,6 +146,10 @@ export function rejectStory(runId: string, storyId: string): Promise<StoryDetail
 	return api.post<StoryDetail>(`/runs/${runId}/stories/${storyId}/reject`);
 }
 
+export function reconsiderStory(runId: string, storyId: string): Promise<StoryDetail> {
+	return api.post<StoryDetail>(`/runs/${runId}/stories/${storyId}/reconsider`);
+}
+
 export function retryStory(runId: string, storyId: string): Promise<StoryDetail> {
 	return api.post<StoryDetail>(`/runs/${runId}/stories/${storyId}/retry`);
 }

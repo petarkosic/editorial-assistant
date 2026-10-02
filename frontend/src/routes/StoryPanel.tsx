@@ -9,6 +9,7 @@ import {
 } from '../components/ui';
 import {
 	useApproveStory,
+	useReconsiderStory,
 	useRetryStory,
 	useSelectStories,
 	useStory,
@@ -68,6 +69,7 @@ export function StoryPanel({
 	const { data: story, isLoading } = useStory(runId, storyId);
 	const approve = useApproveStory(runId, storyId);
 	const retry = useRetryStory(runId, storyId);
+	const reconsider = useReconsiderStory(runId, storyId);
 	const selectOne = useSelectStories(runId);
 	const [scorecardOpen, setScorecardOpen] = useState(false);
 
@@ -258,8 +260,18 @@ export function StoryPanel({
 
 			{story.status === 'rejected' && (
 				<div className={styles.rejectedNote} role='status'>
-					<strong>Rejected</strong> at the{' '}
-					{story.article_draft ? 'draft' : 'research'} stage.
+					<span>
+						<strong>Rejected</strong> at the{' '}
+						{story.article_draft ? 'draft' : 'research'} stage.
+					</span>
+					<Button
+						variant='secondary'
+						size='sm'
+						onClick={() => reconsider.mutate()}
+						isLoading={reconsider.isPending}
+					>
+						Reconsider
+					</Button>
 				</div>
 			)}
 		</div>

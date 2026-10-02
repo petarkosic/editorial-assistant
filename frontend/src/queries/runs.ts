@@ -6,6 +6,7 @@ import {
 	getRun,
 	getStory,
 	listRuns,
+	reconsiderStory,
 	reevaluateStory,
 	rejectStory,
 	retryStory,
@@ -115,6 +116,10 @@ export function useApproveStory(runId: string, storyId: string) {
 
 export function useRejectStory(runId: string, storyId: string) {
 	return useStoryAction(runId, storyId, rejectStory);
+}
+
+export function useReconsiderStory(runId: string, storyId: string) {
+	return useStoryAction(runId, storyId, reconsiderStory);
 }
 
 export function useRetryStory(runId: string, storyId: string) {

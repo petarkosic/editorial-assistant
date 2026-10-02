@@ -259,6 +259,27 @@ async def reject_story(
     return await _story_detail_response(session, story)
 
 
+@router.post("/{run_id}/stories/{story_id}/reconsider", response_model=StoryDetail)
+async def reconsider_story(
+    run_id: str, story_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Undo a rejection: back to the stage it was rejected at."""
+    story = await _load_story_or_404(session, run_id, story_id)
+    if story.status != "rejected":
+        raise HTTPException(409, detail=f"cannot reconsider a story in status {story.status!r}")
+
+    draft_artifact = await repo.get_story_artifact(session, story.id, "article_draft")
+    story.status = "draft_ready" if draft_artifact is not None else "research_ready"
+
+    run = await repo.get_run(session, story.run_id)
+    if run is not None and run.status == "done":
+        run.status = "in_progress"
+
+    await session.commit()
+
+    return await _story_detail_response(session, story)
+
+
 @router.post("/{run_id}/stories/{story_id}/retry", response_model=StoryDetail)
 async def retry_story(
     run_id: str, story_id: str, session: AsyncSession = Depends(get_session)
