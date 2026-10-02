@@ -52,6 +52,16 @@ class SelectStoriesRequest(BaseModel):
     story_ids: list[str] = Field(..., min_length=1)
 
 
+class UpdateDraftRequest(BaseModel):
+    """The editable parts of a draft. Server-owned fields are never accepted."""
+
+    headline: str = Field(..., min_length=1)
+    lede: str = Field(..., min_length=1)
+    body: list[str] = Field(..., min_length=1)
+    key_points: list[str] = Field(default_factory=list)
+    sources_cited: list[str] = Field(default_factory=list)
+
+
 class StoryDetail(BaseModel):
     id: uuid.UUID
     run_id: uuid.UUID

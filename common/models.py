@@ -53,3 +53,6 @@ class ArticleDraft(BaseModel):
     sources_cited: list[str]
     based_on_title: str
     generated_at: datetime
+    # True once an editor has changed the draft, so the judge score (which
+    # was computed on the original text) can be labelled as such.
+    edited: bool = False

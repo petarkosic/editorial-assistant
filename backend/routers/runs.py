@@ -15,9 +15,10 @@ from backend.schemas import (
     SelectStoriesRequest,
     StoryDetail,
     StoryOut,
+    UpdateDraftRequest,
 )
 from backend.storage import get_store
-from common.models import AnalysisResult, ResearchBrief
+from common.models import AnalysisResult, ArticleDraft, ResearchBrief
 from evaluation.judge import Judge
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -144,9 +145,11 @@ async def _load_story_or_404(session, run_id: str, story_id: str) -> Story:
 
 
 async def _story_detail_response(session, story: Story) -> StoryDetail:
-    brief_art = await repo.get_research_artifact(session, story.id)
-    trace_art = await repo.get_research_trace_artifact(session, story.id)
+    brief_artifact = await repo.get_research_artifact(session, story.id)
+    trace_artifact = await repo.get_research_trace_artifact(session, story.id)
     research_eval = await repo.get_research_evaluation(session, story.id)
+    draft_artifact = await repo.get_story_artifact(session, story.id, "article_draft")
+    draft_eval = await repo.get_story_evaluation(session, story.id, "draft")
 
     return StoryDetail(
         id=str(story.id),
@@ -155,11 +158,16 @@ async def _story_detail_response(session, story: Story) -> StoryDetail:
         finding=story.finding,
         selected=story.selected,
         error=story.error,
-        research_brief=brief_art.content if brief_art else None,
-        research_trace=trace_art.content if trace_art else None,
+        research_brief=brief_artifact.content if brief_artifact else None,
+        research_trace=trace_artifact.content if trace_artifact else None,
         research_evaluation=(
             EvaluationOut.model_validate(research_eval, from_attributes=True)
             if research_eval else None
+        ),
+        article_draft=draft_artifact.content if draft_artifact else None,
+        draft_evaluation=(
+            EvaluationOut.model_validate(draft_eval, from_attributes=True)
+            if draft_eval else None
         ),
     )
 
@@ -178,7 +186,7 @@ async def select_stories(
     run = await repo.get_run(session, run_uuid)
     if run is None:
         raise HTTPException(404, detail="run not found")
-    if run.status not in ("selecting", "in_progress"):
+    if run.status not in ("selecting", "in_progress", "done"):
         raise HTTPException(409, detail=f"cannot select stories while run is {run.status!r}")
 
     try:
@@ -220,13 +228,18 @@ async def approve_story(
     run_id: str, story_id: str, session: AsyncSession = Depends(get_session)
 ):
     story = await _load_story_or_404(session, run_id, story_id)
-    if story.status != "research_ready":
+
+    if story.status == "research_ready":
+        story.status = "synthesizing"
+        await session.commit()
+
+        pipeline.enqueue_synthesis_for_story(str(story.id))
+    elif story.status == "draft_ready":
+        story.status = "approved"
+        await pipeline.recompute_run_status(session, story.run_id)
+        await session.commit()
+    else:
         raise HTTPException(409, detail=f"cannot approve a story in status {story.status!r}")
-    story.status = "synthesizing"
-
-    await session.commit()
-
-    pipeline.enqueue_synthesis_for_story(str(story.id))
 
     return await _story_detail_response(session, story)
 
@@ -239,6 +252,7 @@ async def reject_story(
     if story.status not in ("research_ready", "draft_ready"):
         raise HTTPException(409, detail=f"cannot reject a story in status {story.status!r}")
     story.status = "rejected"
+    await pipeline.recompute_run_status(session, story.run_id)
 
     await session.commit()
 
@@ -252,12 +266,22 @@ async def retry_story(
     story = await _load_story_or_404(session, run_id, story_id)
     if story.status != "failed":
         raise HTTPException(409, detail=f"cannot retry a story in status {story.status!r}")
-    story.status = "researching"
+
     story.error = None
+    run = await repo.get_run(session, story.run_id)
+    if run is not None and run.status == "done":
+        run.status = "in_progress"
 
-    await session.commit()
+    # A story that already has a brief failed while writing: put it back at the
+    # approval step rather than silently re-running synthesis without a click.
+    if await repo.get_research_artifact(session, story.id) is not None:
+        story.status = "research_ready"
+        await session.commit()
+    else:
+        story.status = "researching"
+        await session.commit()
 
-    pipeline.enqueue(pipeline.run_research_task(str(story.id)))
+        pipeline.enqueue(pipeline.run_research_task(str(story.id)))
 
     return await _story_detail_response(session, story)
 
@@ -270,14 +294,14 @@ async def evaluate_story(
     if story.status != "research_ready":
         raise HTTPException(409, detail=f"cannot evaluate a story in status {story.status!r}")
 
-    brief_art = await repo.get_research_artifact(session, story.id)
-    if brief_art is None:
+    brief_artifact = await repo.get_research_artifact(session, story.id)
+    if brief_artifact is None:
         raise HTTPException(409, detail="no research brief to evaluate yet")
 
     finding = AnalysisResult.model_validate(story.finding)
-    brief = ResearchBrief.model_validate(brief_art.content)
-    trace_art = await repo.get_research_trace_artifact(session, story.id)
-    trace = trace_art.content.get("tool_calls") if trace_art else None
+    brief = ResearchBrief.model_validate(brief_artifact.content)
+    trace_artifact = await repo.get_research_trace_artifact(session, story.id)
+    trace = trace_artifact.content.get("tool_calls") if trace_artifact else None
 
     stage_eval = await pipeline.run_in_thread(
         Judge().evaluate_research, brief, finding, trace
@@ -298,6 +322,46 @@ async def evaluate_story(
         )
     )
 
+    await session.commit()
+
+    return await _story_detail_response(session, story)
+
+
+@router.put("/{run_id}/stories/{story_id}/draft", response_model=StoryDetail)
+async def update_draft(
+    run_id: str,
+    story_id: str,
+    body: UpdateDraftRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    story = await _load_story_or_404(session, run_id, story_id)
+    if story.status != "draft_ready":
+        raise HTTPException(409, detail=f"cannot edit a draft while the story is {story.status!r}")
+
+    draft_artifact = await repo.get_story_artifact(session, story.id, "article_draft")
+    brief_artifact = await repo.get_research_artifact(session, story.id)
+    if draft_artifact is None or brief_artifact is None:
+        raise HTTPException(409, detail="there is no draft to edit yet")
+
+    brief = ResearchBrief.model_validate(brief_artifact.content)
+    readable = {s.url for s in brief.sources if s.fetch_status == "ok"}
+    unknown = [url for url in body.sources_cited if url not in readable]
+    if unknown:
+        raise HTTPException(
+            422,
+            detail="sources_cited may only include sources that were read: "
+            + ", ".join(unknown),
+        )
+
+    updated = ArticleDraft.model_validate(draft_artifact.content).model_copy(
+        update={**body.model_dump(), "edited": True}
+    )
+    updated_json = updated.model_dump(mode="json")
+
+    await pipeline.run_in_thread(get_store().write_json, draft_artifact.file_key, updated_json)
+    await repo.upsert_artifact(
+        session, story.run_id, story.id, "article_draft", draft_artifact.file_key, updated_json
+    )
     await session.commit()
 
     return await _story_detail_response(session, story)

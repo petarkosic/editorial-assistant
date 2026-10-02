@@ -144,6 +144,34 @@ async def get_research_evaluation(session: AsyncSession, story_id) -> Evaluation
     )
 
 
+async def get_story_artifact(session: AsyncSession, story_id, kind: str) -> Artifact | None:
+    return (
+        (
+            await session.execute(
+                select(Artifact)
+                .where(Artifact.story_id == story_id, Artifact.kind == kind)
+                .order_by(Artifact.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
+async def get_story_evaluation(session: AsyncSession, story_id, stage: str) -> Evaluation | None:
+    return (
+        (
+            await session.execute(
+                select(Evaluation)
+                .where(Evaluation.story_id == story_id, Evaluation.stage == stage)
+                .order_by(Evaluation.created_at.desc())
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+
 async def upsert_artifact(
     session: AsyncSession, run_id, story_id, kind: str, file_key: str, content: dict
 ) -> Artifact:

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from common.config import MODEL_JUDGE
 from common.llm import get_client, parse_json_response
-from common.models import AnalysisResult, ResearchBrief, ScoutReport
+from common.models import AnalysisResult, ArticleDraft, ResearchBrief, ScoutReport
 from evaluation.evaluator import EvaluationScore
 
 
@@ -72,6 +72,37 @@ Return ONLY valid JSON of this exact shape:
     {"criterion": "Hallucination Check", "score": 4, "reasoning": "..."},
     {"criterion": "Source Usage", "score": 4, "reasoning": "..."},
     {"criterion": "Research Strategy Quality", "score": 4, "reasoning": "..."}
+  ],
+  "strengths": ["..."],
+  "weaknesses": ["..."],
+  "suggestions": "..."
+}
+"""
+
+
+_DRAFT_SYSTEM_PROMPT = """You are an expert editor evaluating a news article drafted by an AI writer
+from a research brief. The brief is the writer's ONLY allowed source.
+
+Evaluate the draft on these criteria, each scored 1-5 (5 = excellent):
+1. Fidelity to Brief - does every claim in the draft come from the brief's background or key facts?
+2. No Fabrication - are there invented facts, numbers, names, dates or quotations that are NOT in
+   the brief? Does it state an answer to any OPEN QUESTION, or present a FACT-CHECK FLAG as settled?
+3. Structure & Readability - is it inverted-pyramid, with a lede that carries the key facts, short
+   clear paragraphs, and a headline that matches the content?
+4. Neutral Tone - wire-service neutrality: attributed claims, no opinion, speculation or loaded words?
+5. Citation Validity - is every URL in sources_cited a source from the brief that was read
+   (fetch_status "ok"), and do those sources plausibly support the draft? A draft that cites nothing
+   when readable sources exist should score low.
+
+Return ONLY valid JSON of this exact shape:
+{
+  "overall_score": 4.1,
+  "scores": [
+    {"criterion": "Fidelity to Brief", "score": 4, "reasoning": "..."},
+    {"criterion": "No Fabrication", "score": 4, "reasoning": "..."},
+    {"criterion": "Structure & Readability", "score": 4, "reasoning": "..."},
+    {"criterion": "Neutral Tone", "score": 4, "reasoning": "..."},
+    {"criterion": "Citation Validity", "score": 4, "reasoning": "..."}
   ],
   "strengths": ["..."],
   "weaknesses": ["..."],
@@ -157,7 +188,34 @@ class Judge:
         data = parse_json_response(response.choices[0].message.content)
         return StageEvaluation(**data)
 
-    def evaluate_draft(self, draft, brief) -> StageEvaluation:
-        # Draft rubric: fidelity to brief, no fabricated facts/quotes,
-        # structure/readability, citation validity.
-        raise NotImplementedError("draft rubric")
+    @observe(name="judge.evaluate_draft")
+    def evaluate_draft(self, draft: ArticleDraft, brief: ResearchBrief) -> StageEvaluation:
+        user_prompt = (
+            f"BRIEF BACKGROUND: {brief.background}\n"
+            f"KEY FACTS: {json.dumps(brief.key_facts)}\n"
+            f"OPEN QUESTIONS: {json.dumps(brief.open_questions)}\n"
+            f"FACT-CHECK FLAGS: {json.dumps(brief.fact_check_flags)}\n"
+            f"SOURCES: {json.dumps([s.model_dump() for s in brief.sources])}\n\n"
+            "DRAFT ARTICLE:\n"
+            + json.dumps(
+                {
+                    "headline": draft.headline,
+                    "lede": draft.lede,
+                    "body": draft.body,
+                    "key_points": draft.key_points,
+                    "sources_cited": draft.sources_cited,
+                },
+                indent=2,
+            )
+        )
+        response = self.client.chat.completions.create(
+            model=MODEL_JUDGE,
+            messages=[
+                {"role": "system", "content": _DRAFT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+        )
+        data = parse_json_response(response.choices[0].message.content)
+
+        return StageEvaluation(**data)

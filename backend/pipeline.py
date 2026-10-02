@@ -11,11 +11,12 @@ from backend import repositories as repo
 from backend.db import SessionLocal
 from backend.models import Artifact, Evaluation, Run, Story
 from backend.storage import get_store
-from common.config import RESEARCH_CONCURRENCY
-from common.models import AnalysisResult
+from common.config import RESEARCH_CONCURRENCY, SYNTHESIS_CONCURRENCY
+from common.models import AnalysisResult, ResearchBrief
 from evaluation.judge import Judge
 from research_agent.agent import ResearchAgent
 from scout_agent.agent import NewsScoutAgent
+from synthesis_agent.agent import SynthesisAgent
 
 logger = logging.getLogger("backend.pipeline")
 
@@ -66,17 +67,21 @@ def build_rss_url(source_kind: str, source_query: str | None) -> str:
 
 
 _semaphore = asyncio.Semaphore(RESEARCH_CONCURRENCY)
+# Synthesis is one short LLM call, so it gets its own limit instead of queueing
+# behind long research jobs: a draft can be written while other stories research.
+_synthesis_semaphore = asyncio.Semaphore(SYNTHESIS_CONCURRENCY)
 _background_tasks: set[asyncio.Task] = set()
 
 
-async def _bounded(coro):
-    async with _semaphore:
+async def _bounded(coro, semaphore):
+    async with semaphore:
         return await coro
 
 
-def enqueue(coro) -> asyncio.Task:
-    """Schedule a coroutine on the running loop behind the concurrency semaphore."""
-    task = asyncio.create_task(_bounded(coro))
+def enqueue(coro, semaphore: asyncio.Semaphore | None = None) -> asyncio.Task:
+    """Schedule a coroutine on the running loop behind a concurrency semaphore
+    (the shared scout/research one unless another is given)."""
+    task = asyncio.create_task(_bounded(coro, semaphore or _semaphore))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
@@ -307,6 +312,7 @@ async def run_research_task(story_id: str, session_factory=SessionLocal) -> None
             if story is not None:
                 story.status = "failed"
                 story.error = friendly_error(exc)
+                await recompute_run_status(session, story.run_id)
                 await session.commit()
 
 
@@ -336,9 +342,100 @@ async def enqueue_research_for_run(session, run_id) -> None:
         enqueue(run_research_task(str(story.id)))
 
 
+_FINISHED_STORY_STATUSES = ("approved", "rejected", "failed")
+
+
+async def recompute_run_status(session, run_id) -> None:
+    """Move an in-progress run to `done` once every selected story is finished.
+
+    Reversible: selecting or retrying a story later puts the run back to
+    `in_progress`. The caller commits.
+    """
+    run = await session.get(Run, run_id)
+    if run is None or run.status != "in_progress":
+        return
+
+    statuses = (
+        await session.execute(
+            select(Story.status).where(Story.run_id == run.id, Story.selected.is_(True))
+        )
+    ).scalars().all()
+
+    if statuses and all(s in _FINISHED_STORY_STATUSES for s in statuses):
+        run.status = "done"
+
+
+async def run_synthesis_task(story_id: str, session_factory=SessionLocal) -> None:
+    """Background synthesis stage: research brief -> draft artifact -> judge ->
+    `draft_ready`. Concurrency is bounded by `enqueue()`, as for research."""
+
+    async with session_factory() as session:
+        story = await session.get(Story, uuid.UUID(str(story_id)))
+        if story is None:
+            logger.warning("run_synthesis_task: story %s not found", story_id)
+
+            return
+
+        run_id = str(story.run_id)
+
+        try:
+            brief_artifact = await repo.get_research_artifact(session, story.id)
+            if brief_artifact is None:
+                raise RuntimeError("There is no research brief to write from.")
+
+            brief = ResearchBrief.model_validate(brief_artifact.content)
+            finding = AnalysisResult.model_validate(story.finding)
+
+            draft = await run_in_thread(SynthesisAgent().synthesize, brief, finding)
+
+            draft_key = f"{run_id}/{story_id}/article_draft.json"
+            draft_json = draft.model_dump(mode="json")
+            await run_in_thread(get_store().write_json, draft_key, draft_json)
+            await repo.upsert_artifact(
+                session, story.run_id, story.id, "article_draft", draft_key, draft_json
+            )
+
+            # A re-synthesis replaces the draft, so its old score must not linger.
+            previous = await repo.get_story_evaluation(session, story.id, "draft")
+            if previous is not None:
+                await session.delete(previous)
+
+            try:
+                stage_eval = await run_in_thread(Judge().evaluate_draft, draft, brief)
+                session.add(
+                    Evaluation(
+                        run_id=story.run_id,
+                        story_id=story.id,
+                        stage="draft",
+                        overall_score=stage_eval.overall_score,
+                        scores=[s.model_dump() for s in stage_eval.scores],
+                        strengths=list(stage_eval.strengths),
+                        weaknesses=list(stage_eval.weaknesses),
+                        suggestions=stage_eval.suggestions,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "draft judge failed for story %s - continuing (advisory only)",
+                    story_id,
+                )
+
+            story.status = "draft_ready"
+            await session.commit()
+        except Exception as exc:
+            logger.exception("synthesis task failed for story %s", story_id)
+            await session.rollback()
+            story = await session.get(Story, uuid.UUID(str(story_id)))
+            if story is not None:
+                story.status = "failed"
+                story.error = friendly_error(exc)
+                await recompute_run_status(session, story.run_id)
+                await session.commit()
+
+
 def enqueue_synthesis_for_story(story_id: str) -> None:
-    # replace this body with the real synthesis task enqueue. 
-    logger.info("synthesis enqueue for story %s ", story_id)
+    """Fire-and-forget; the caller has already set status `synthesizing`."""
+    enqueue(run_synthesis_task(story_id), _synthesis_semaphore)
 
 
 async def reconcile_orphans(session_factory=SessionLocal) -> None:
